@@ -62,6 +62,14 @@ impl Db {
             .map_err(|e| Error::Internal(format!("db pool: {e}")))
     }
 
+    /// Cheap liveness probe — `SELECT 1` round-trip.
+    pub async fn ping(&self) -> Result<(), Error> {
+        self.query_opt("SELECT 1", &[], "ping")
+            .await?
+            .ok_or_else(|| Error::Internal("ping returned no row".into()))?;
+        Ok(())
+    }
+
     /// Apply the idempotent schema migration. Safe to run on every cold start.
     pub async fn migrate(&self, sql: &str) -> Result<(), Error> {
         let client = self.conn().await?;

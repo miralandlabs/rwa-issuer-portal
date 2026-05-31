@@ -101,4 +101,16 @@ export const api = {
   markSynced(bearer: string, id: number): Promise<KycRecord> {
     return call("POST", "/api/v1/sync/mark", { id }, bearer);
   },
+
+  listKyc(
+    bearer: string,
+    params?: { status?: string; issuer_id?: string; limit?: number },
+  ): Promise<{ items: KycRecord[]; count: number }> {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.issuer_id) qs.set("issuer_id", params.issuer_id);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return call("GET", `/api/v1/kyc${q ? `?${q}` : ""}`, undefined, bearer);
+  },
 };

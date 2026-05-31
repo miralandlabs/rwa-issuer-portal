@@ -88,15 +88,24 @@ export function renderPortalAdminPanel(root: HTMLElement): void {
   }
 }
 
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function feedTable(items: SyncFeedItem[]): string {
   const rows = items
     .map(
       (it) => `
       <tr>
         <td>${it.id}</td>
-        <td><code>${it.issuer_id_hex}</code></td>
-        <td><code>${it.wallet}</code></td>
-        <td>${it.scope}${it.offering_id ? " · " + it.offering_id : ""}</td>
+        <td><code>${esc(it.issuer_id_hex)}</code></td>
+        <td><code>${esc(it.wallet)}</code></td>
+        <td>${esc(it.scope)}${it.offering_id ? " · " + esc(it.offering_id) : ""}</td>
         <td>${it.is_verified ? "verify" : "revoke"}</td>
         <td><button class="btn btn-ghost btn-sm" data-mark="${it.id}">Mark synced</button></td>
       </tr>`,

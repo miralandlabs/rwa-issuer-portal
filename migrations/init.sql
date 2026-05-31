@@ -4,9 +4,9 @@
 --
 -- Binding contract (see rwa-kyc-hook/docs/SYNC_RUNBOOK.md):
 --   issuers.id (UUID)  ==  on-chain issuer_id (32-char hex, no dashes)
--- The portal is the off-chain system of record. A separate ops sync reads the
--- `kyc_sync_feed` view and drives the on-chain PDA writes with the ops keypair;
--- the portal itself never signs or writes on-chain.
+-- The portal is the off-chain system of record. A separate ops sync reads
+-- GET /api/v1/sync/feed and drives the on-chain PDA writes with the ops
+-- keypair; the portal itself never signs or writes on-chain.
 
 -- ---- Issuers (one row per tenant) ------------------------------------------
 CREATE TABLE IF NOT EXISTS issuers (
@@ -52,20 +52,30 @@ CREATE TABLE IF NOT EXISTS issuer_kyc_records (
     review_note     TEXT,
     submitted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     decided_at      TIMESTAMPTZ,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Offering scope: a NULL offering_id and a present one are distinct keys.
-    -- COALESCE keeps the global row unique per (issuer, wallet) while allowing
-    -- one row per (issuer, wallet, offering).
-    CONSTRAINT issuer_kyc_unique UNIQUE (issuer_id, wallet, scope, offering_id)
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Drop the legacy table-level UNIQUE that treated NULL offering_id as distinct
+-- (PostgreSQL NULL != NULL), allowing duplicate global rows. Safe on re-run.
+ALTER TABLE issuer_kyc_records DROP CONSTRAINT IF EXISTS issuer_kyc_unique;
+
+-- Partial unique indexes: one global row per (issuer, wallet); one offering
+-- row per (issuer, wallet, offering_id).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kyc_unique_global
+    ON issuer_kyc_records (issuer_id, wallet)
+    WHERE scope = 'global';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kyc_unique_offering
+    ON issuer_kyc_records (issuer_id, wallet, offering_id)
+    WHERE scope = 'offering';
 
 CREATE INDEX IF NOT EXISTS idx_kyc_issuer_wallet
     ON issuer_kyc_records (issuer_id, wallet);
 
--- Rows the ops sync still needs to push on-chain: an approved+verified
--- decision whose on-chain KycRecord has not yet been updated. The sync worker
--- (portal-admin bearer gated) reads this, calls create/update-kyc-verified, then
--- marks `synced_on_chain = true`.
+-- Rows the ops sync still needs to push on-chain: a decided row whose on-chain
+-- KycRecord has not yet been updated. Matches repo::sync_feed filter + order.
+DROP INDEX IF EXISTS idx_kyc_sync_pending;
 CREATE INDEX IF NOT EXISTS idx_kyc_sync_pending
-    ON issuer_kyc_records (issuer_id)
-    WHERE synced_on_chain = FALSE;
+    ON issuer_kyc_records (updated_at ASC)
+    WHERE synced_on_chain = FALSE
+      AND status IN ('approved', 'rejected');

@@ -2,6 +2,7 @@ use {
     chrono::Utc,
     serde::Serialize,
     serde_json::json,
+    tracing::error,
     vercel_runtime::{Body, Response, StatusCode as VercelStatusCode},
 };
 
@@ -34,12 +35,15 @@ const CORS_HEADERS: &str = "Content-Type, Authorization, Date, X-Date";
 impl Error {
     pub fn to_vercel_response(&self) -> Response<Body> {
         let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-        let (status, message) = match self {
+        let (status, message): (VercelStatusCode, &str) = match self {
             Error::BadRequest(m) => (VercelStatusCode::BAD_REQUEST, m),
             Error::Unauthorized(m) => (VercelStatusCode::UNAUTHORIZED, m),
             Error::NotFound(m) => (VercelStatusCode::NOT_FOUND, m),
             Error::Conflict(m) => (VercelStatusCode::CONFLICT, m),
-            Error::Internal(m) => (VercelStatusCode::INTERNAL_SERVER_ERROR, m),
+            Error::Internal(m) => {
+                error!(internal_error = %m, "internal server error");
+                (VercelStatusCode::INTERNAL_SERVER_ERROR, "internal error")
+            }
         };
         Response::builder()
             .status(status)

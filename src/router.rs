@@ -56,6 +56,7 @@ pub async fn dispatch(
         (&http::Method::POST, "/api/v1/issuers") => api::register_issuer(body, state).await,
         (&http::Method::GET, "/api/v1/issuers") => api::get_issuer(query, state).await,
         (&http::Method::POST, "/api/v1/kyc") => api::submit_kyc(body, state).await,
+        (&http::Method::GET, "/api/v1/kyc") => api::list_kyc(headers, query, state).await,
 
         // Portal admin (bearer-gated)
         (&http::Method::PATCH, "/api/v1/issuers") => {

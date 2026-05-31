@@ -33,6 +33,7 @@ Every issuer/KYC response includes `issuer_id_hex` for the kyc-hook CLI. See
 | -------- | -------- | ------- |
 | `DATABASE_URL` | Yes | Shared Supabase Postgres (same DB as aethervane / spl-token-balance) |
 | `PORTAL_ADMIN_TOKEN` or `PORTAL_ADMIN_TOKEN_SHA256` | Yes | One portal admin; gates review + sync feed |
+| `PORTAL_ADMIN_TOKEN_OPTIONAL` | No | Set to `1` for local dev without admin token (not for production) |
 
 Copy `env.example` → `.env` for local dev. The portal adds `issuers` /
 `issuer_kyc_records` tables via idempotent migration on cold start.
@@ -52,6 +53,7 @@ Copy `env.example` → `.env` for local dev. The portal adds `issuers` /
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
+| `GET`   | `/api/v1/kyc` | List KYC records (`?status=`, `?issuer_id=`) |
 | `POST`  | `/api/v1/kyc/review` | Approve / reject KYC |
 | `PATCH` | `/api/v1/issuers` | Set issuer status |
 | `GET`   | `/api/v1/sync/feed` | Rows stale vs on-chain |
@@ -78,7 +80,13 @@ cargo run --bin dev-server --features dev-server
 cd storefront && npm install && npm run dev   # http://localhost:5173
 ```
 
-`cargo test` covers issuer-id binding, portal-admin auth, and scope validation.
+`cargo test` covers issuer-id binding, portal-admin auth, scope validation, and wallet pubkey checks.
+
+Integration tests (real Postgres) live in `tests/portal_integration.rs` and are `#[ignore]` by default:
+
+```bash
+TEST_DATABASE_URL='postgres://...' cargo test --test portal_integration -- --ignored
+```
 
 Build the Vite storefront into `public/` (required before Vercel deploy):
 

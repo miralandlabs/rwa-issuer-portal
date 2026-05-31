@@ -26,10 +26,25 @@ pub fn uuid_to_issuer_id_hex(id: &Uuid) -> String {
 }
 
 /// Parse a user-supplied issuer id into a canonical UUID, accepting either the
-/// dashed UUID form or the 32-char on-chain hex form.
+/// dashed UUID form or the 32-char on-chain hex form (case-insensitive hex).
 pub fn parse_issuer_id(input: &str) -> Result<Uuid, String> {
     let s = input.trim();
-    Uuid::parse_str(s).map_err(|e| format!("invalid issuer id '{s}': {e}"))
+    if let Ok(id) = Uuid::parse_str(s) {
+        return Ok(id);
+    }
+    if s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        let lower = s.to_ascii_lowercase();
+        let dashed = format!(
+            "{}-{}-{}-{}-{}",
+            &lower[0..8],
+            &lower[8..12],
+            &lower[12..16],
+            &lower[16..20],
+            &lower[20..32]
+        );
+        return Uuid::parse_str(&dashed).map_err(|e| format!("invalid issuer id '{s}': {e}"));
+    }
+    Err(format!("invalid issuer id '{s}'"))
 }
 
 #[cfg(test)]
@@ -70,5 +85,15 @@ mod tests {
     fn parse_rejects_garbage() {
         assert!(parse_issuer_id("not-a-uuid").is_err());
         assert!(parse_issuer_id("550e8400").is_err());
+    }
+
+    #[test]
+    fn parse_accepts_uppercase_hex() {
+        let lower = "550e8400e29b41d4a716446655440000";
+        let upper = "550E8400E29B41D4A716446655440000";
+        assert_eq!(
+            parse_issuer_id(lower).unwrap(),
+            parse_issuer_id(upper).unwrap()
+        );
     }
 }

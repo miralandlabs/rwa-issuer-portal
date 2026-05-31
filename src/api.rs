@@ -35,8 +35,7 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 }
 
 pub async fn handle_health(state: Arc<AppState>) -> Response<Body> {
-    // Cheap DB round-trip via a no-op query keeps health honest.
-    let db_ok = repo::sync_feed(&state.db, 1).await.is_ok();
+    let db_ok = state.db.ping().await.is_ok();
     let status = if db_ok {
         StatusCode::OK
     } else {
@@ -101,6 +100,25 @@ pub async fn submit_kyc(body: &Body, state: Arc<AppState>) -> Response<Body> {
             req.offering_id.as_deref(),
         )
         .await
+    }
+    .await;
+    into_vercel_response(result)
+}
+
+// ---- Portal admin: list KYC records ----
+pub async fn list_kyc(headers: &HeaderMap, query: &str, state: Arc<AppState>) -> Response<Body> {
+    let result = async {
+        state.config.verify_portal_admin_token(bearer(headers))?;
+        let status = query_param(query, "status");
+        let issuer_id = query_param(query, "issuer_id")
+            .map(|raw| parse_issuer_id(&raw).map_err(Error::BadRequest))
+            .transpose()?;
+        let limit = query_param(query, "limit")
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(100)
+            .clamp(1, 1000);
+        let items = repo::list_kyc(&state.db, status.as_deref(), issuer_id.as_ref(), limit).await?;
+        Ok(json!({ "items": items, "count": items.len() }))
     }
     .await;
     into_vercel_response(result)

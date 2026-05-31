@@ -30,6 +30,15 @@ impl Config {
                     .map(|t| sha256_hex(&t))
             });
 
+        let admin_optional = env::var("PORTAL_ADMIN_TOKEN_OPTIONAL")
+            .ok()
+            .is_some_and(|v| v == "1");
+        if portal_admin_token_sha256.is_none() && !admin_optional {
+            return Err(Error::Internal(
+                "PORTAL_ADMIN_TOKEN or PORTAL_ADMIN_TOKEN_SHA256 is required (set PORTAL_ADMIN_TOKEN_OPTIONAL=1 for local dev without admin)".into(),
+            ));
+        }
+
         Ok(Self {
             database_url,
             portal_admin_token_sha256,

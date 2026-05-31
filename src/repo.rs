@@ -10,6 +10,24 @@ use crate::{
 };
 
 const OFFERING_MAX_LEN: usize = 31;
+const PUBKEY_LEN: usize = 32;
+
+/// Validate a base58-encoded Solana public key (32 bytes decoded).
+pub fn validate_solana_pubkey(label: &str, value: &str) -> Result<(), Error> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(Error::BadRequest(format!("{label} is required")));
+    }
+    let decoded = bs58::decode(trimmed)
+        .into_vec()
+        .map_err(|_| Error::BadRequest(format!("{label} must be a valid base58 Solana pubkey")))?;
+    if decoded.len() != PUBKEY_LEN {
+        return Err(Error::BadRequest(format!(
+            "{label} must decode to {PUBKEY_LEN} bytes"
+        )));
+    }
+    Ok(())
+}
 
 /// Validate the (scope, offering_id) pair against the on-chain seed rules.
 pub fn validate_scope(scope: &str, offering_id: Option<&str>) -> Result<(), Error> {
@@ -46,6 +64,12 @@ pub async fn create_issuer(
 ) -> Result<Issuer, Error> {
     if name.trim().is_empty() {
         return Err(Error::BadRequest("name is required".into()));
+    }
+    if let Some(p) = ops_authority {
+        validate_solana_pubkey("ops_authority", p)?;
+    }
+    if let Some(p) = identity {
+        validate_solana_pubkey("identity", p)?;
     }
     let row = db
         .query_opt(
@@ -93,6 +117,7 @@ pub async fn set_issuer_status(db: &Db, id: &Uuid, status: &str) -> Result<Issue
 
 /// Investor submits KYC (idempotent on the unique key — re-submission resets a
 /// rejected/pending row back to pending, but never downgrades an approved one).
+/// Only issuers with status `active` may receive submissions.
 pub async fn submit_kyc(
     db: &Db,
     issuer_id: &Uuid,
@@ -100,27 +125,49 @@ pub async fn submit_kyc(
     scope: &str,
     offering_id: Option<&str>,
 ) -> Result<KycRecord, Error> {
-    if wallet.trim().is_empty() {
-        return Err(Error::BadRequest("wallet is required".into()));
+    validate_solana_pubkey("wallet", wallet)?;
+    let issuer = get_issuer(db, issuer_id).await?;
+    if issuer.status != "active" {
+        return Err(Error::BadRequest(format!(
+            "issuer is {}: KYC submission not accepted",
+            issuer.status
+        )));
     }
-    // Single round-trip: issuer existence check + upsert share one transaction.
-    let row = db
-        .query_opt(
-            "INSERT INTO issuer_kyc_records (issuer_id, wallet, scope, offering_id)
-             SELECT i.id, $2, $3, $4
-             FROM issuers i
-             WHERE i.id = $1
-             ON CONFLICT (issuer_id, wallet, scope, offering_id) DO UPDATE
-               SET updated_at = NOW(),
-                   status = CASE WHEN issuer_kyc_records.status = 'rejected'
-                                 THEN 'pending' ELSE issuer_kyc_records.status END
-             RETURNING id, issuer_id, wallet, scope, offering_id, status,
-                       is_verified, synced_on_chain, review_note",
-            &[issuer_id, &wallet, &scope, &offering_id],
-            "submit_kyc",
-        )
-        .await?
-        .ok_or_else(|| Error::NotFound(format!("issuer {issuer_id} not found")))?;
+
+    let row = match scope {
+        "global" => {
+            db.query_opt(
+                "INSERT INTO issuer_kyc_records (issuer_id, wallet, scope, offering_id)
+                 VALUES ($1, $2, 'global', NULL)
+                 ON CONFLICT (issuer_id, wallet) WHERE scope = 'global' DO UPDATE
+                   SET updated_at = NOW(),
+                       status = CASE WHEN issuer_kyc_records.status = 'rejected'
+                                     THEN 'pending' ELSE issuer_kyc_records.status END
+                 RETURNING id, issuer_id, wallet, scope, offering_id, status,
+                           is_verified, synced_on_chain, review_note",
+                &[issuer_id, &wallet],
+                "submit_kyc_global",
+            )
+            .await?
+        }
+        "offering" => {
+            db.query_opt(
+                "INSERT INTO issuer_kyc_records (issuer_id, wallet, scope, offering_id)
+                 VALUES ($1, $2, 'offering', $3)
+                 ON CONFLICT (issuer_id, wallet, offering_id) WHERE scope = 'offering' DO UPDATE
+                   SET updated_at = NOW(),
+                       status = CASE WHEN issuer_kyc_records.status = 'rejected'
+                                     THEN 'pending' ELSE issuer_kyc_records.status END
+                 RETURNING id, issuer_id, wallet, scope, offering_id, status,
+                           is_verified, synced_on_chain, review_note",
+                &[issuer_id, &wallet, &offering_id],
+                "submit_kyc_offering",
+            )
+            .await?
+        }
+        other => return Err(Error::BadRequest(format!("invalid scope '{other}'"))),
+    };
+    let row = row.ok_or_else(|| Error::Internal("submit_kyc returned no row".into()))?;
     Ok(KycRecord::from_row(&row))
 }
 
@@ -136,6 +183,34 @@ pub async fn get_kyc(db: &Db, id: i64) -> Result<KycRecord, Error> {
         .await?
         .ok_or_else(|| Error::NotFound(format!("kyc record {id} not found")))?;
     Ok(KycRecord::from_row(&row))
+}
+
+/// Portal-admin list with optional filters.
+pub async fn list_kyc(
+    db: &Db,
+    status: Option<&str>,
+    issuer_id: Option<&Uuid>,
+    limit: i64,
+) -> Result<Vec<KycRecord>, Error> {
+    if let Some(s) = status {
+        if !matches!(s, "pending" | "approved" | "rejected") {
+            return Err(Error::BadRequest(format!("invalid status '{s}'")));
+        }
+    }
+    let rows = db
+        .query(
+            "SELECT id, issuer_id, wallet, scope, offering_id, status,
+                    is_verified, synced_on_chain, review_note
+             FROM issuer_kyc_records
+             WHERE ($1::text IS NULL OR status = $1)
+               AND ($2::uuid IS NULL OR issuer_id = $2)
+             ORDER BY updated_at DESC
+             LIMIT $3",
+            &[&status, &issuer_id, &limit],
+            "list_kyc",
+        )
+        .await?;
+    Ok(rows.iter().map(KycRecord::from_row).collect())
 }
 
 /// Portal-admin review. Approve sets is_verified=true and re-arms the sync flag so
@@ -208,15 +283,25 @@ pub async fn mark_synced(db: &Db, id: i64) -> Result<KycRecord, Error> {
         .query_opt(
             "UPDATE issuer_kyc_records
                 SET synced_on_chain = TRUE, updated_at = NOW()
-              WHERE id = $1
+              WHERE id = $1 AND synced_on_chain = FALSE
               RETURNING id, issuer_id, wallet, scope, offering_id, status,
                         is_verified, synced_on_chain, review_note",
             &[&id],
             "mark_synced",
         )
-        .await?
-        .ok_or_else(|| Error::NotFound(format!("kyc record {id} not found")))?;
-    Ok(KycRecord::from_row(&row))
+        .await?;
+    match row {
+        Some(r) => Ok(KycRecord::from_row(&r)),
+        None => {
+            if get_kyc(db, id).await.is_ok() {
+                Err(Error::Conflict(format!(
+                    "kyc record {id} is already synced on-chain"
+                )))
+            } else {
+                Err(Error::NotFound(format!("kyc record {id} not found")))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -233,5 +318,16 @@ mod tests {
         assert!(validate_scope("offering", Some(&"a".repeat(32))).is_err());
         assert!(validate_scope("offering", Some(&"a".repeat(31))).is_ok());
         assert!(validate_scope("bogus", None).is_err());
+    }
+
+    #[test]
+    fn wallet_validation_accepts_system_program() {
+        assert!(validate_solana_pubkey("wallet", "11111111111111111111111111111111").is_ok());
+    }
+
+    #[test]
+    fn wallet_validation_rejects_garbage() {
+        assert!(validate_solana_pubkey("wallet", "not-a-pubkey").is_err());
+        assert!(validate_solana_pubkey("wallet", "").is_err());
     }
 }
