@@ -6,7 +6,7 @@ export function renderKycCard(root: HTMLElement): void {
     <section class="card">
       <h3>Submit investor KYC</h3>
       <p class="card-sub">Records a KYC request for an investor wallet under an issuer.
-        An operator reviews it; once approved, the ops sync writes the on-chain KycRecord.</p>
+        Portal admin reviews it; once approved, the ops sync writes the on-chain KycRecord.</p>
       <form id="kyc-form" class="form-grid">
         <label>Issuer id (UUID or hex)
           <input name="issuer_id" required placeholder="550e8400-e29b-41d4-a716-446655440000" /></label>

@@ -2,7 +2,7 @@
 //!
 //! The portal's `issuers.id` is a UUID. The on-chain `rwa-kyc-hook` program
 //! seeds its `IssuerConfig` / `KycRecord` PDAs with a raw 16-byte `issuer_id`
-//! and the operator CLI accepts it as a **32-char lowercase hex string with no
+//! and the kyc-hook CLI accepts it as a **32-char lowercase hex string with no
 //! dashes** (see `rwa-kyc-hook` `parse_issuer_id_hex`). This module is the
 //! single place that converts between the two so the off-chain record and the
 //! on-chain tenant can never drift.
@@ -42,7 +42,9 @@ mod tests {
         let hex = uuid_to_issuer_id_hex(&id);
         assert_eq!(hex, "550e8400e29b41d4a716446655440000");
         assert_eq!(hex.len(), 32);
-        assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(hex
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 
     #[test]
@@ -58,7 +60,10 @@ mod tests {
     fn parse_accepts_both_forms() {
         let dashed = "550e8400-e29b-41d4-a716-446655440000";
         let hex = "550e8400e29b41d4a716446655440000";
-        assert_eq!(parse_issuer_id(dashed).unwrap(), parse_issuer_id(hex).unwrap());
+        assert_eq!(
+            parse_issuer_id(dashed).unwrap(),
+            parse_issuer_id(hex).unwrap()
+        );
     }
 
     #[test]

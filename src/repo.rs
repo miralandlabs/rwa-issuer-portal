@@ -73,7 +73,7 @@ pub async fn get_issuer(db: &Db, id: &Uuid) -> Result<Issuer, Error> {
     Ok(Issuer::from_row(&row))
 }
 
-/// Operator: set issuer status (active / paused / closed).
+/// Portal admin: set issuer status (active / paused / closed).
 pub async fn set_issuer_status(db: &Db, id: &Uuid, status: &str) -> Result<Issuer, Error> {
     if !matches!(status, "pending" | "active" | "paused" | "closed") {
         return Err(Error::BadRequest(format!("invalid status '{status}'")));
@@ -138,7 +138,7 @@ pub async fn get_kyc(db: &Db, id: i64) -> Result<KycRecord, Error> {
     Ok(KycRecord::from_row(&row))
 }
 
-/// Operator review. Approve sets is_verified=true and re-arms the sync flag so
+/// Portal-admin review. Approve sets is_verified=true and re-arms the sync flag so
 /// the ops worker pushes it on-chain; reject clears verification (and, if it
 /// was previously verified, re-arms the sync so the on-chain flag is revoked).
 pub async fn review_kyc(
@@ -202,7 +202,7 @@ pub async fn sync_feed(db: &Db, limit: i64) -> Result<Vec<SyncFeedItem>, Error> 
         .collect())
 }
 
-/// Operator marks a row synced after running the kyc-hook ops CLI.
+/// Portal admin marks a row synced after running the kyc-hook ops CLI.
 pub async fn mark_synced(db: &Db, id: i64) -> Result<KycRecord, Error> {
     let n = db
         .execute(

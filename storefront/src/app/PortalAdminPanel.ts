@@ -1,19 +1,19 @@
 import { api, type SyncFeedItem } from "../services/api";
 import { errMsg } from "./IssuerCard";
 
-// Operator bearer token, in-memory only (never persisted).
+// Portal admin bearer token — in-memory only (never persisted).
 let bearer = "";
 
-export function renderOperatorPanel(root: HTMLElement): void {
+export function renderPortalAdminPanel(root: HTMLElement): void {
   root.innerHTML = `
     <section class="card">
-      <h3>Operator</h3>
-      <p class="card-sub">Bearer-gated. Review KYC submissions, set issuer status, and
-        work the on-chain sync feed. The token is held in memory only.</p>
-      <label>Operator token
-        <input id="op-token" type="password" placeholder="bearer token" autocomplete="off" /></label>
+      <h3>Portal admin</h3>
+      <p class="card-sub">One admin per deployment. Review KYC, set issuer status,
+        and work the on-chain sync feed. Token is held in memory only.</p>
+      <label>Admin token
+        <input id="admin-token" type="password" placeholder="bearer token" autocomplete="off" /></label>
 
-      <div class="op-actions">
+      <div class="admin-actions">
         <form id="review-form" class="form-inline">
           <input name="id" type="number" min="1" placeholder="kyc id" required />
           <select name="decision">
@@ -24,27 +24,27 @@ export function renderOperatorPanel(root: HTMLElement): void {
           <button type="submit" class="btn btn-primary">Review</button>
         </form>
       </div>
-      <p class="form-msg" id="op-msg"></p>
+      <p class="form-msg" id="admin-msg"></p>
 
       <hr class="card-rule" />
       <div class="feed-head">
         <h3>On-chain sync feed</h3>
         <button type="button" class="btn btn-ghost" id="feed-refresh">Refresh</button>
       </div>
-      <p class="card-sub">Approved/rejected decisions whose on-chain KycRecord is stale.
-        Run the kyc-hook ops CLI for each, then mark it synced.</p>
+      <p class="card-sub">Decisions whose on-chain KycRecord is stale. Run the kyc-hook
+        ops CLI for each row, then mark synced.</p>
       <div id="feed"></div>
     </section>
   `;
 
-  const tokenInput = root.querySelector("#op-token") as HTMLInputElement;
+  const tokenInput = root.querySelector("#admin-token") as HTMLInputElement;
   tokenInput.addEventListener("input", () => (bearer = tokenInput.value.trim()));
 
-  const msg = root.querySelector("#op-msg") as HTMLElement;
+  const msg = root.querySelector("#admin-msg") as HTMLElement;
   const reviewForm = root.querySelector("#review-form") as HTMLFormElement;
   reviewForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    if (!bearer) return setMsg(msg, "Enter the operator token first.", true);
+    if (!bearer) return setMsg(msg, "Enter the admin token first.", true);
     const fd = new FormData(reviewForm);
     try {
       const rec = await api.reviewKyc(bearer, {
@@ -65,7 +65,7 @@ export function renderOperatorPanel(root: HTMLElement): void {
 
   async function loadFeed(): Promise<void> {
     if (!bearer) {
-      feed.innerHTML = `<p class="form-msg">Enter the operator token to load the feed.</p>`;
+      feed.innerHTML = `<p class="form-msg">Enter the admin token to load the feed.</p>`;
       return;
     }
     feed.innerHTML = `<p class="form-msg">Loading…</p>`;

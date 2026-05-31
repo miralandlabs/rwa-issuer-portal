@@ -1,7 +1,7 @@
 import { renderHeader } from "./Header";
 import { renderIssuerCard } from "./IssuerCard";
 import { renderKycCard } from "./KycCard";
-import { renderOperatorPanel } from "./OperatorPanel";
+import { renderPortalAdminPanel } from "./PortalAdminPanel";
 
 export function bootstrap(root: HTMLElement): void {
   const shell = document.createElement("div");
@@ -27,9 +27,9 @@ export function bootstrap(root: HTMLElement): void {
   renderKycCard(kycMount);
   grid.append(issuerMount, kycMount);
 
-  const opMount = document.createElement("div");
-  renderOperatorPanel(opMount);
+  const adminMount = document.createElement("div");
+  renderPortalAdminPanel(adminMount);
 
-  shell.append(headerMount, hero, grid, opMount);
+  shell.append(headerMount, hero, grid, adminMount);
   root.replaceChildren(shell);
 }

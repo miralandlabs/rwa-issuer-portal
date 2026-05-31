@@ -1,6 +1,5 @@
-//! HTTP handlers. Public endpoints: issuer self-registration, issuer read,
-//! investor KYC submission. Operator endpoints (bearer-gated): KYC review,
-//! issuer status, the on-chain sync feed, and mark-synced.
+//! HTTP handlers. Public: issuer registration, issuer read, KYC submit.
+//! Portal-admin (bearer-gated): KYC review, issuer status, sync feed, mark-synced.
 
 use std::sync::Arc;
 
@@ -11,9 +10,7 @@ use vercel_runtime::{Body, Response, StatusCode};
 use crate::{
     error::{into_vercel_response, Error},
     issuer_id::parse_issuer_id,
-    models::{
-        MarkSyncedRequest, RegisterIssuerRequest, ReviewKycRequest, SubmitKycRequest,
-    },
+    models::{MarkSyncedRequest, RegisterIssuerRequest, ReviewKycRequest, SubmitKycRequest},
     repo,
     state::AppState,
 };
@@ -40,7 +37,11 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 pub async fn handle_health(state: Arc<AppState>) -> Response<Body> {
     // Cheap DB round-trip via a no-op query keeps health honest.
     let db_ok = repo::sync_feed(&state.db, 1).await.is_ok();
-    let status = if db_ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    let status = if db_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
     Response::builder()
         .status(status)
         .header("Content-Type", "application/json")
@@ -105,10 +106,10 @@ pub async fn submit_kyc(body: &Body, state: Arc<AppState>) -> Response<Body> {
     into_vercel_response(result)
 }
 
-// ---- Operator: review a KYC submission ----
+// ---- Portal admin: review a KYC submission ----
 pub async fn review_kyc(headers: &HeaderMap, body: &Body, state: Arc<AppState>) -> Response<Body> {
     let result = async {
-        state.config.verify_operator_token(bearer(headers))?;
+        state.config.verify_portal_admin_token(bearer(headers))?;
         let req: ReviewKycRequest = parse_body(body)?;
         repo::review_kyc(&state.db, req.id, &req.decision, req.review_note.as_deref()).await
     }
@@ -116,7 +117,7 @@ pub async fn review_kyc(headers: &HeaderMap, body: &Body, state: Arc<AppState>) 
     into_vercel_response(result)
 }
 
-// ---- Operator: set issuer status ----
+// ---- Portal admin: set issuer status ----
 pub async fn set_issuer_status(
     headers: &HeaderMap,
     body: &Body,
@@ -128,7 +129,7 @@ pub async fn set_issuer_status(
         status: String,
     }
     let result = async {
-        state.config.verify_operator_token(bearer(headers))?;
+        state.config.verify_portal_admin_token(bearer(headers))?;
         let req: Req = parse_body(body)?;
         let id = parse_issuer_id(&req.issuer_id).map_err(Error::BadRequest)?;
         repo::set_issuer_status(&state.db, &id, &req.status).await
@@ -137,10 +138,10 @@ pub async fn set_issuer_status(
     into_vercel_response(result)
 }
 
-// ---- Operator: on-chain sync feed ----
+// ---- Portal admin: on-chain sync feed ----
 pub async fn sync_feed(headers: &HeaderMap, query: &str, state: Arc<AppState>) -> Response<Body> {
     let result = async {
-        state.config.verify_operator_token(bearer(headers))?;
+        state.config.verify_portal_admin_token(bearer(headers))?;
         let limit = query_param(query, "limit")
             .and_then(|s| s.parse::<i64>().ok())
             .unwrap_or(100)
@@ -152,10 +153,10 @@ pub async fn sync_feed(headers: &HeaderMap, query: &str, state: Arc<AppState>) -
     into_vercel_response(result)
 }
 
-// ---- Operator: mark a KYC row synced on-chain ----
+// ---- Portal admin: mark a KYC row synced on-chain ----
 pub async fn mark_synced(headers: &HeaderMap, body: &Body, state: Arc<AppState>) -> Response<Body> {
     let result = async {
-        state.config.verify_operator_token(bearer(headers))?;
+        state.config.verify_portal_admin_token(bearer(headers))?;
         let req: MarkSyncedRequest = parse_body(body)?;
         repo::mark_synced(&state.db, req.id).await
     }

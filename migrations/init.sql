@@ -14,11 +14,11 @@ CREATE TABLE IF NOT EXISTS issuers (
     name            TEXT NOT NULL,
     -- Lifecycle: pending (self-registered) -> active (platform-approved) ->
     -- paused | closed. Mirrors the on-chain IssuerStatus but is advisory here;
-    -- the on-chain RegisterIssuer is a separate operator step.
+    -- the on-chain RegisterIssuer is a separate step (ops keypair).
     status          TEXT NOT NULL DEFAULT 'pending'
         CONSTRAINT issuers_status_check
         CHECK (status IN ('pending', 'active', 'paused', 'closed')),
-    -- Base58 Solana pubkeys, recorded so the operator can RegisterIssuer
+    -- Base58 Solana pubkeys, recorded so the portal admin can RegisterIssuer
     -- on-chain with the matching ops/identity authorities.
     ops_authority   TEXT,
     identity        TEXT,
@@ -64,7 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_kyc_issuer_wallet
 
 -- Rows the ops sync still needs to push on-chain: an approved+verified
 -- decision whose on-chain KycRecord has not yet been updated. The sync worker
--- (operator-token gated) reads this, calls create/update-kyc-verified, then
+-- (portal-admin bearer gated) reads this, calls create/update-kyc-verified, then
 -- marks `synced_on_chain = true`.
 CREATE INDEX IF NOT EXISTS idx_kyc_sync_pending
     ON issuer_kyc_records (issuer_id)

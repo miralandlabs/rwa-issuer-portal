@@ -2,16 +2,14 @@ use crate::error::Error;
 use sha2::{Digest, Sha256};
 use std::env;
 
-/// Portal configuration. The portal is records-only: it never holds a Solana
-/// keypair and never writes on-chain. It needs a shared Postgres DB and an
-/// operator bearer token to gate review/sync endpoints.
+/// Portal configuration. Records-only: shared Postgres plus a single portal-admin
+/// bearer token that gates review and sync endpoints (one admin per deployment).
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
-    /// SHA-256 (hex) of the operator bearer token. Operator-only endpoints
-    /// (KYC review, issuer activation, sync feed) require
-    /// `Authorization: Bearer <token>` whose SHA-256 matches this.
-    pub operator_token_sha256: Option<String>,
+    /// SHA-256 (hex) of the portal admin bearer token. Admin-only endpoints
+    /// require `Authorization: Bearer <token>` whose SHA-256 matches this.
+    pub portal_admin_token_sha256: Option<String>,
 }
 
 impl Config {
@@ -21,13 +19,12 @@ impl Config {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| Error::Internal("DATABASE_URL is required".into()))?;
 
-        // Accept either the precomputed hash or a raw token (hashed here).
-        let operator_token_sha256 = env::var("PORTAL_OPERATOR_TOKEN_SHA256")
+        let portal_admin_token_sha256 = env::var("PORTAL_ADMIN_TOKEN_SHA256")
             .ok()
             .filter(|s| !s.is_empty())
             .map(|s| s.to_lowercase())
             .or_else(|| {
-                env::var("PORTAL_OPERATOR_TOKEN")
+                env::var("PORTAL_ADMIN_TOKEN")
                     .ok()
                     .filter(|s| !s.is_empty())
                     .map(|t| sha256_hex(&t))
@@ -35,18 +32,16 @@ impl Config {
 
         Ok(Self {
             database_url,
-            operator_token_sha256,
+            portal_admin_token_sha256,
         })
     }
 
-    /// Constant-time-ish check that the presented bearer token matches the
-    /// configured operator token hash. Returns `Unauthorized` when no token is
-    /// configured (fail-closed: operator endpoints are disabled until set).
-    pub fn verify_operator_token(&self, bearer: Option<&str>) -> Result<(), Error> {
+    /// Returns `Unauthorized` when no admin token is configured (fail-closed).
+    pub fn verify_portal_admin_token(&self, bearer: Option<&str>) -> Result<(), Error> {
         let want = self
-            .operator_token_sha256
+            .portal_admin_token_sha256
             .as_deref()
-            .ok_or_else(|| Error::Unauthorized("operator token not configured".into()))?;
+            .ok_or_else(|| Error::Unauthorized("portal admin token not configured".into()))?;
         let token = bearer
             .and_then(|h| h.strip_prefix("Bearer ").or(Some(h)))
             .map(str::trim)
@@ -56,7 +51,7 @@ impl Config {
         if constant_time_eq(got.as_bytes(), want.as_bytes()) {
             Ok(())
         } else {
-            Err(Error::Unauthorized("invalid operator token".into()))
+            Err(Error::Unauthorized("invalid portal admin token".into()))
         }
     }
 }
@@ -91,20 +86,22 @@ mod tests {
     fn token_hash_matches_and_rejects() {
         let cfg = Config {
             database_url: "x".into(),
-            operator_token_sha256: Some(sha256_hex("s3cret")),
+            portal_admin_token_sha256: Some(sha256_hex("s3cret")),
         };
-        assert!(cfg.verify_operator_token(Some("Bearer s3cret")).is_ok());
-        assert!(cfg.verify_operator_token(Some("s3cret")).is_ok());
-        assert!(cfg.verify_operator_token(Some("Bearer wrong")).is_err());
-        assert!(cfg.verify_operator_token(None).is_err());
+        assert!(cfg.verify_portal_admin_token(Some("Bearer s3cret")).is_ok());
+        assert!(cfg.verify_portal_admin_token(Some("s3cret")).is_ok());
+        assert!(cfg.verify_portal_admin_token(Some("Bearer wrong")).is_err());
+        assert!(cfg.verify_portal_admin_token(None).is_err());
     }
 
     #[test]
     fn unconfigured_token_fails_closed() {
         let cfg = Config {
             database_url: "x".into(),
-            operator_token_sha256: None,
+            portal_admin_token_sha256: None,
         };
-        assert!(cfg.verify_operator_token(Some("Bearer anything")).is_err());
+        assert!(cfg
+            .verify_portal_admin_token(Some("Bearer anything"))
+            .is_err());
     }
 }

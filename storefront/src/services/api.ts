@@ -1,5 +1,5 @@
-// Thin client for the rwa-issuer-portal backend. Operator endpoints take a
-// bearer token entered in the UI (kept in-memory only, never persisted).
+// Thin client for the rwa-issuer-portal backend. Admin endpoints require the
+// portal-admin bearer token (in-memory in the UI, never persisted).
 
 export interface Issuer {
   id: string;
@@ -79,7 +79,7 @@ export const api = {
     return call("POST", "/api/v1/kyc", input);
   },
 
-  // ---- Operator ----
+  // ---- Portal admin ----
   reviewKyc(
     bearer: string,
     input: { id: number; decision: "approved" | "rejected"; review_note?: string },

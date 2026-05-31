@@ -10,7 +10,7 @@ use crate::issuer_id::uuid_to_issuer_id_hex;
 pub struct Issuer {
     pub id: Uuid,
     /// The on-chain `issuer_id` (32-char hex) derived from `id`. Included in
-    /// responses so operators can copy it straight into the kyc-hook CLI.
+    /// responses so the portal admin can copy it into the kyc-hook CLI.
     pub issuer_id_hex: String,
     pub name: String,
     pub status: String,
@@ -98,7 +98,7 @@ fn default_scope() -> String {
     "global".to_string()
 }
 
-/// Operator review decision.
+/// Portal-admin KYC review decision.
 #[derive(Debug, Deserialize)]
 pub struct ReviewKycRequest {
     pub id: i64,
@@ -108,7 +108,7 @@ pub struct ReviewKycRequest {
     pub review_note: Option<String>,
 }
 
-/// Operator: mark a KYC row as synced on-chain after the ops CLI ran.
+/// Portal admin: mark a KYC row synced on-chain after the ops CLI ran.
 #[derive(Debug, Deserialize)]
 pub struct MarkSyncedRequest {
     pub id: i64,

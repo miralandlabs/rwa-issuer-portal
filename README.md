@@ -8,10 +8,12 @@ the sync feed and drives the kyc-hook CLI with the ops keypair.
 ```
 investor / issuer ──HTTP──▶ rwa-issuer-portal ──Postgres──┐
                                                           │  (records only)
-operator ──review/approve──▶                              │
+portal admin ──review/approve──▶                          │
                                                           ▼
                               GET /api/v1/sync/feed ──▶ ops sync ──▶ rwa-kyc-hook CLI ──▶ on-chain KycRecord
 ```
+
+One **portal admin** bearer token per deployment (not per issuer). On-chain signing stays in the separate ops sync + `ops_authority` keypair.
 
 ## The binding contract
 
@@ -22,8 +24,7 @@ the 32-char, dash-free hex string the kyc-hook CLI expects:
 | -------------------------- | ----------------------------------------------- |
 | `550e8400-e29b-41d4-a716-446655440000` | `550e8400e29b41d4a716446655440000` |
 
-Every issuer/KYC response includes `issuer_id_hex` so operators can copy it
-into the kyc-hook CLI. See
+Every issuer/KYC response includes `issuer_id_hex` for the kyc-hook CLI. See
 [`rwa-kyc-hook/docs/SYNC_RUNBOOK.md`](https://github.com/miralandlabs/rwa-kyc-hook/blob/main/docs/SYNC_RUNBOOK.md).
 
 ## Required environment
@@ -31,7 +32,7 @@ into the kyc-hook CLI. See
 | Variable | Required | Purpose |
 | -------- | -------- | ------- |
 | `DATABASE_URL` | Yes | Shared Supabase Postgres (same DB as aethervane / spl-token-balance) |
-| `PORTAL_OPERATOR_TOKEN` or `PORTAL_OPERATOR_TOKEN_SHA256` | Yes | Gates operator routes (review, sync feed) |
+| `PORTAL_ADMIN_TOKEN` or `PORTAL_ADMIN_TOKEN_SHA256` | Yes | One portal admin; gates review + sync feed |
 
 Copy `env.example` → `.env` for local dev. The portal adds `issuers` /
 `issuer_kyc_records` tables via idempotent migration on cold start.
@@ -47,7 +48,7 @@ Copy `env.example` → `.env` for local dev. The portal adds `issuers` /
 | `POST` | `/api/v1/kyc` | Submit investor KYC |
 | `GET`  | `/health` | Liveness + DB probe |
 
-**Operator** (`Authorization: Bearer <PORTAL_OPERATOR_TOKEN>`)
+**Portal admin** (`Authorization: Bearer <PORTAL_ADMIN_TOKEN>`)
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
@@ -77,7 +78,7 @@ cargo run --bin dev-server --features dev-server
 cd storefront && npm install && npm run dev   # http://localhost:5173
 ```
 
-`cargo test` covers issuer-id binding, operator auth, and scope validation.
+`cargo test` covers issuer-id binding, portal-admin auth, and scope validation.
 
 Build the Vite storefront into `public/` (required before Vercel deploy):
 
@@ -100,7 +101,7 @@ builder and empty `public/` on clone will fail. Use the workflow instead.
 
 1. Create a Vercel project (empty or linked manually once).
 2. Add GitHub repo secrets: `VERCEL_TOKEN`, `ORG_ID`, `PROJECT_ID`.
-3. Set Vercel env vars: `DATABASE_URL`, `PORTAL_OPERATOR_TOKEN_SHA256` (or token).
+3. Set Vercel env vars: `DATABASE_URL`, `PORTAL_ADMIN_TOKEN_SHA256` (or `PORTAL_ADMIN_TOKEN`).
 4. Push to `main` — workflow deploys production; other branches get previews.
 
 Pin Vercel CLI to **52.x** in CI (newer CLI breaks legacy `builds` + `vercel-rust`).
@@ -110,7 +111,7 @@ Pin Vercel CLI to **52.x** in CI (newer CLI breaks legacy `builds` + `vercel-rus
 The ops side is out of this repo (it holds the keypair):
 
 ```bash
-for row in $(curl -s -H "Authorization: Bearer $TOKEN" "$PORTAL/api/v1/sync/feed" | jq -c '.items[]'); do
+for row in $(curl -s -H "Authorization: Bearer $PORTAL_ADMIN_TOKEN" "$PORTAL/api/v1/sync/feed" | jq -c '.items[]'); do
   ISSUER=$(echo "$row" | jq -r .issuer_id_hex)
   WALLET=$(echo "$row" | jq -r .wallet)
   SCOPE=$(echo "$row" | jq -r .scope)
@@ -118,7 +119,7 @@ for row in $(curl -s -H "Authorization: Bearer $TOKEN" "$PORTAL/api/v1/sync/feed
   ID=$(echo "$row" | jq -r .id)
   export RWA_KYC_HOOK_ISSUER_ID="$ISSUER" OPS_KEYPAIR=/secure/ops.json
   # run rwa-kyc-hook scripts (create if needed, then update verified)
-  curl -s -X POST -H "Authorization: Bearer $TOKEN" "$PORTAL/api/v1/sync/mark" -d "{\"id\":$ID}"
+  curl -s -X POST -H "Authorization: Bearer $PORTAL_ADMIN_TOKEN" "$PORTAL/api/v1/sync/mark" -d "{\"id\":$ID}"
 done
 ```
 

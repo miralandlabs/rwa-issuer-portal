@@ -2,7 +2,7 @@
 //!
 //! Records-only off-chain system of record for the rwa-kyc-hook tenant model.
 //! Public routes: issuer self-registration, issuer read, investor KYC submit.
-//! Operator routes (bearer-gated): KYC review, issuer status, on-chain sync
+//! Portal-admin routes (bearer-gated): KYC review, issuer status, on-chain sync
 //! feed, mark-synced. The portal NEVER signs or writes on-chain — a separate
 //! ops sync (`rwa-kyc-hook/scripts/sync-worker.sh`) consumes the feed and
 //! drives the kyc-hook CLI.
@@ -38,9 +38,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                   body: Body,
                   state: Arc<AppState>|
      -> Pin<Box<dyn Future<Output = Response<Body>> + Send>> {
-        Box::pin(async move {
-            router::dispatch(&headers, &method, &path, &query, &body, state).await
-        })
+        Box::pin(
+            async move { router::dispatch(&headers, &method, &path, &query, &body, state).await },
+        )
     };
 
     run_server(state, routes).await
