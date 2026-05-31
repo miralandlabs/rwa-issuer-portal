@@ -10,6 +10,17 @@ license = "Apache-2.0"
 name = "portal"
 path = "src/bin/portal.rs"
 
+[[bin]]
+name = "dev-server"
+path = "src/bin/dev_server.rs"
+required-features = ["dev-server"]
+
+[features]
+# Local plain-HTTP dev server (not used by the Vercel deployment, which drives
+# the lambda runtime). Lets `npm run dev` proxy to 127.0.0.1:8080 and enables
+# end-to-end testing of the ops sync worker without Vercel.
+dev-server = []
+
 [dependencies]
 anyhow = "1.0"
 tokio = { version = "1.0", features = ["full", "rt-multi-thread"] }
