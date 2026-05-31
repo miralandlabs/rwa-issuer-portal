@@ -1,6 +1,5 @@
 {
     "version": 2,
-    "name": "rwa-issuer-portal",
     "builds": [
         {
             "src": "src/bin/portal.rs",

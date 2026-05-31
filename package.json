@@ -1,0 +1,7 @@
+{
+  "name": "rwa-issuer-portal",
+  "private": true,
+  "scripts": {
+    "build:storefront": "cd storefront && npm ci && npm run build"
+  }
+}

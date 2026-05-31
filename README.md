@@ -1,6 +1,6 @@
 # rwa-issuer-portal
 
-Off-chain **system of record** for the x402 [`rwa-kyc-hook`](../rwa-kyc-hook)
+Off-chain **system of record** for the x402 [`rwa-kyc-hook`](https://github.com/miralandlabs/rwa-kyc-hook)
 tenant model: issuer registration + investor KYC. The portal records decisions
 in Postgres; it **never signs or writes on-chain**. A separate ops sync reads
 the sync feed and drives the kyc-hook CLI with the ops keypair.
@@ -23,66 +23,91 @@ the 32-char, dash-free hex string the kyc-hook CLI expects:
 | `550e8400-e29b-41d4-a716-446655440000` | `550e8400e29b41d4a716446655440000` |
 
 Every issuer/KYC response includes `issuer_id_hex` so operators can copy it
-straight into `./scripts/*.sh` in the kyc-hook repo. See
-[`rwa-kyc-hook/docs/SYNC_RUNBOOK.md`](../rwa-kyc-hook/docs/SYNC_RUNBOOK.md).
+into the kyc-hook CLI. See
+[`rwa-kyc-hook/docs/SYNC_RUNBOOK.md`](https://github.com/miralandlabs/rwa-kyc-hook/blob/main/docs/SYNC_RUNBOOK.md).
 
-## Shared database
+## Required environment
 
-Reuses the **same Supabase Postgres** as `aethervane` and
-`spl-token-balance` (one DB for preview deployments, one for production). The
-portal adds its own `issuers` / `issuer_kyc_records` tables (no collision with
-the shared `parameters` table); the idempotent migration runs on cold start.
+| Variable | Required | Purpose |
+| -------- | -------- | ------- |
+| `DATABASE_URL` | Yes | Shared Supabase Postgres (same DB as aethervane / spl-token-balance) |
+| `PORTAL_OPERATOR_TOKEN` or `PORTAL_OPERATOR_TOKEN_SHA256` | Yes | Gates operator routes (review, sync feed) |
+
+Copy `env.example` → `.env` for local dev. The portal adds `issuers` /
+`issuer_kyc_records` tables via idempotent migration on cold start.
 
 ## HTTP surface
 
-Public:
+**Public**
 
-| Method | Path | Body / query | Purpose |
-| ------ | ---- | ------------ | ------- |
-| `POST` | `/api/v1/issuers` | `{name, ops_authority?, identity?, contact_email?}` | Self-register an issuer |
-| `GET`  | `/api/v1/issuers?issuer_id=<uuid\|hex>` | — | Read an issuer |
-| `POST` | `/api/v1/kyc` | `{issuer_id, wallet, scope, offering_id?}` | Submit investor KYC |
-| `GET`  | `/health` | — | Liveness + DB probe |
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `POST` | `/api/v1/issuers` | Self-register an issuer |
+| `GET`  | `/api/v1/issuers?issuer_id=` | Read an issuer |
+| `POST` | `/api/v1/kyc` | Submit investor KYC |
+| `GET`  | `/health` | Liveness + DB probe |
 
-Operator (require `Authorization: Bearer <PORTAL_OPERATOR_TOKEN>`):
+**Operator** (`Authorization: Bearer <PORTAL_OPERATOR_TOKEN>`)
 
-| Method | Path | Body | Purpose |
-| ------ | ---- | ---- | ------- |
-| `POST`  | `/api/v1/kyc/review` | `{id, decision: approved\|rejected, review_note?}` | Approve / reject a KYC record |
-| `PATCH` | `/api/v1/issuers` | `{issuer_id, status}` | Set issuer status |
-| `GET`   | `/api/v1/sync/feed?limit=` | — | Decisions whose on-chain state is stale |
-| `POST`  | `/api/v1/sync/mark` | `{id}` | Mark a record synced after running the CLI |
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `POST`  | `/api/v1/kyc/review` | Approve / reject KYC |
+| `PATCH` | `/api/v1/issuers` | Set issuer status |
+| `GET`   | `/api/v1/sync/feed` | Rows stale vs on-chain |
+| `POST`  | `/api/v1/sync/mark` | Mark synced after CLI run |
 
 ## KYC lifecycle
 
 ```
-submit ─▶ pending ─review─▶ approved (is_verified=true,  synced_on_chain=false)
-                        └──▶ rejected (is_verified=false, synced_on_chain=false)
-ops sync: read feed ─▶ run kyc-hook create/update-kyc-verified ─▶ POST /sync/mark ─▶ synced_on_chain=true
+submit → pending → review → approved/rejected (synced_on_chain=false)
+ops sync: feed → kyc-hook create/update → POST /sync/mark → synced_on_chain=true
 ```
 
-`scope` is `global` or `offering`; offering rows carry an `offering_id`
-(≤ 31 bytes, matching the on-chain KycRecord seed limit).
+`scope` is `global` or `offering` (offering id ≤ 31 UTF-8 bytes, matching on-chain seeds).
 
 ## Run locally
 
 ```bash
-cp env.example .env   # set DATABASE_URL + PORTAL_OPERATOR_TOKEN
+cp env.example .env
 
-# backend (records-only)
-cargo run --bin portal           # serves on the vercel_runtime local port
+# Backend (records-only; plain HTTP on :8080)
+cargo run --bin dev-server --features dev-server
 
-# storefront (emerald light/dark, proxies /api to the backend)
+# Storefront (proxies /api → backend)
 cd storefront && npm install && npm run dev   # http://localhost:5173
 ```
 
-`cargo test` covers the issuer-id binding, operator-token auth, and scope
-validation. `npm run build` emits the storefront into `../public` for Vercel.
+`cargo test` covers issuer-id binding, operator auth, and scope validation.
+
+Build the Vite storefront into `public/` (required before Vercel deploy):
+
+```bash
+npm run build:storefront
+```
+
+## Deploy to Vercel
+
+This repo matches the [`x402-buy-spl-token`](https://github.com/miralandlabs/x402-buy-spl-token) pattern:
+
+1. **Rust API** — `vercel-rust` serverless binary (`src/bin/portal.rs`)
+2. **Static UI** — Vite build output in `public/` (not committed; built in CI)
+3. **CI deploy** — GitHub Actions runs tests, builds storefront, then `vercel build` + `vercel deploy --prebuilt`
+
+Do **not** rely on the Vercel dashboard “Import Git Repository” alone — the Rust
+builder and empty `public/` on clone will fail. Use the workflow instead.
+
+**One-time setup**
+
+1. Create a Vercel project (empty or linked manually once).
+2. Add GitHub repo secrets: `VERCEL_TOKEN`, `ORG_ID`, `PROJECT_ID`.
+3. Set Vercel env vars: `DATABASE_URL`, `PORTAL_OPERATOR_TOKEN_SHA256` (or token).
+4. Push to `main` — workflow deploys production; other branches get previews.
+
+Pin Vercel CLI to **52.x** in CI (newer CLI breaks legacy `builds` + `vercel-rust`).
 
 ## Sync worker (example)
 
-The ops side is deliberately out of this repo (it holds the keypair). A minimal
-worker, per the kyc-hook runbook:
+The ops side is out of this repo (it holds the keypair):
 
 ```bash
 for row in $(curl -s -H "Authorization: Bearer $TOKEN" "$PORTAL/api/v1/sync/feed" | jq -c '.items[]'); do
@@ -92,14 +117,12 @@ for row in $(curl -s -H "Authorization: Bearer $TOKEN" "$PORTAL/api/v1/sync/feed
   VERIFIED=$(echo "$row" | jq -r .is_verified)
   ID=$(echo "$row" | jq -r .id)
   export RWA_KYC_HOOK_ISSUER_ID="$ISSUER" OPS_KEYPAIR=/secure/ops.json
-  ( cd ../rwa-kyc-hook/scripts && ./create-kyc-record.sh "$SCOPE" "$WALLET" 2>/dev/null || true
-    ./update-kyc-verified.sh "$SCOPE" "$WALLET" "$VERIFIED" )
+  # run rwa-kyc-hook scripts (create if needed, then update verified)
   curl -s -X POST -H "Authorization: Bearer $TOKEN" "$PORTAL/api/v1/sync/mark" -d "{\"id\":$ID}"
 done
 ```
 
 ## Theme
 
-Layout + emerald light/dark theme reuse the
-[`x402-buy-spl-token`](../x402-buy-spl-token) storefront scheme (`theme.css`
-verbatim, JetBrains Mono, `data-theme` toggle persisted to `localStorage`).
+Emerald light/dark layout reused from
+[`x402-buy-spl-token`](https://github.com/miralandlabs/x402-buy-spl-token) (`theme.css`, JetBrains Mono, `data-theme` toggle).
