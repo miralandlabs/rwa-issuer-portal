@@ -1,0 +1,9 @@
+.DS_Store
+/target
+.env
+*.zip
+
+# Storefront build output is emitted into /public by Vite; node deps are local.
+storefront/node_modules
+public/assets
+public/index.html

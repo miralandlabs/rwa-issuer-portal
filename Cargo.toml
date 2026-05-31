@@ -1,0 +1,38 @@
+[package]
+name = "rwa-issuer-portal"
+description = "RWA issuer registration + investor KYC portal (off-chain system of record for rwa-kyc-hook)"
+repository = "https://github.com/miraland-labs/rwa-issuer-portal.git"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[[bin]]
+name = "portal"
+path = "src/bin/portal.rs"
+
+[dependencies]
+anyhow = "1.0"
+tokio = { version = "1.0", features = ["full", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+http = "1.0"
+vercel_runtime = "1.1.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_qs = "0.14"
+
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+bs58 = "0.5"
+
+# Shared Supabase Postgres (same DB as aethervane / spl-token-balance),
+# namespaced by its own tables. Timeout-wrapped pool mirrors those crates.
+deadpool-postgres = { version = "0.14", features = ["serde"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"] }
+postgres-openssl = "0.5"
+openssl = "0.10"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "test-util"] }
