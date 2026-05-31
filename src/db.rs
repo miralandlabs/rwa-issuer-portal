@@ -13,6 +13,7 @@ use postgres_openssl::MakeTlsConnector;
 use std::time::Duration;
 use tokio::time::timeout;
 use tokio_postgres::types::ToSql;
+use tracing::error;
 
 use crate::error::Error;
 
@@ -26,7 +27,10 @@ impl Db {
     const CREATE: Duration = Duration::from_secs(10);
     const RECYCLE: Duration = Duration::from_secs(30);
     const POOL_GET_TIMEOUT: Duration = Duration::from_secs(20);
+    const TX_BEGIN_TIMEOUT: Duration = Duration::from_secs(20);
+    const SET_LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(5);
     const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+    const DEALLOCATE_TIMEOUT: Duration = Duration::from_secs(5);
     const PG_STATEMENT_TIMEOUT: &'static str = "20s";
 
     pub fn connect(database_url: &str) -> Result<Self, Error> {
@@ -80,10 +84,7 @@ impl Db {
         label: &str,
     ) -> Result<Option<tokio_postgres::Row>, Error> {
         let client = self.conn().await?;
-        timeout(Self::QUERY_TIMEOUT, client.query_opt(sql, params))
-            .await
-            .map_err(|_| Error::Internal(format!("{label} timed out")))?
-            .map_err(|e| Error::Internal(format!("{label} failed: {e}")))
+        self.query_opt_in_tx(client, sql, params, label).await
     }
 
     pub(crate) async fn query(
@@ -93,22 +94,86 @@ impl Db {
         label: &str,
     ) -> Result<Vec<tokio_postgres::Row>, Error> {
         let client = self.conn().await?;
-        timeout(Self::QUERY_TIMEOUT, client.query(sql, params))
-            .await
-            .map_err(|_| Error::Internal(format!("{label} timed out")))?
-            .map_err(|e| Error::Internal(format!("{label} failed: {e}")))
+        self.query_in_tx(client, sql, params, label).await
     }
 
-    pub(crate) async fn execute(
+    async fn begin_transaction<'a>(
+        client: &'a mut Client,
+        label: &str,
+    ) -> Result<deadpool_postgres::Transaction<'a>, Error> {
+        timeout(Self::TX_BEGIN_TIMEOUT, client.transaction())
+            .await
+            .map_err(|_| {
+                Error::Internal(format!(
+                    "{label} transaction start timed out (pool connection may be stale)"
+                ))
+            })?
+            .map_err(|e| Error::Internal(format!("{label} transaction start failed: {e}")))
+    }
+
+    async fn set_statement_timeout_local(tx: &deadpool_postgres::Transaction<'_>) {
+        let sql = format!(
+            "SET LOCAL statement_timeout = '{}'",
+            Self::PG_STATEMENT_TIMEOUT
+        );
+        match timeout(Self::SET_LOCAL_CMD_TIMEOUT, tx.execute(sql.as_str(), &[])).await {
+            Ok(Ok(_)) => (),
+            Ok(Err(e)) => error!(error = %e, "SET LOCAL statement_timeout failed"),
+            Err(_) => error!(
+                "SET LOCAL statement_timeout timed out after {:?}",
+                Self::SET_LOCAL_CMD_TIMEOUT
+            ),
+        }
+    }
+
+    async fn deallocate_prepared(tx: &deadpool_postgres::Transaction<'_>) {
+        let _ = timeout(Self::DEALLOCATE_TIMEOUT, tx.execute("DEALLOCATE ALL", &[])).await;
+    }
+
+    async fn commit_tx(tx: deadpool_postgres::Transaction<'_>, label: &str) -> Result<(), Error> {
+        timeout(Self::QUERY_TIMEOUT, tx.commit())
+            .await
+            .map_err(|_| Error::Internal(format!("{label} commit timed out")))?
+            .map_err(|e| Error::Internal(format!("{label} commit failed: {e}")))
+    }
+
+    async fn query_opt_in_tx(
         &self,
+        mut client: Client,
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
         label: &str,
-    ) -> Result<u64, Error> {
-        let client = self.conn().await?;
-        timeout(Self::QUERY_TIMEOUT, client.execute(sql, params))
+    ) -> Result<Option<tokio_postgres::Row>, Error> {
+        let tx = Self::begin_transaction(&mut client, label).await?;
+        Self::set_statement_timeout_local(&tx).await;
+        Self::deallocate_prepared(&tx).await;
+
+        let row = timeout(Self::QUERY_TIMEOUT, tx.query_opt(sql, params))
             .await
             .map_err(|_| Error::Internal(format!("{label} timed out")))?
-            .map_err(|e| Error::Internal(format!("{label} failed: {e}")))
+            .map_err(|e| Error::Internal(format!("{label} failed: {e}")))?;
+
+        Self::commit_tx(tx, label).await?;
+        Ok(row)
+    }
+
+    async fn query_in_tx(
+        &self,
+        mut client: Client,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+        label: &str,
+    ) -> Result<Vec<tokio_postgres::Row>, Error> {
+        let tx = Self::begin_transaction(&mut client, label).await?;
+        Self::set_statement_timeout_local(&tx).await;
+        Self::deallocate_prepared(&tx).await;
+
+        let rows = timeout(Self::QUERY_TIMEOUT, tx.query(sql, params))
+            .await
+            .map_err(|_| Error::Internal(format!("{label} timed out")))?
+            .map_err(|e| Error::Internal(format!("{label} failed: {e}")))?;
+
+        Self::commit_tx(tx, label).await?;
+        Ok(rows)
     }
 }

@@ -103,13 +103,13 @@ pub async fn submit_kyc(
     if wallet.trim().is_empty() {
         return Err(Error::BadRequest("wallet is required".into()));
     }
-    // Issuer must exist (FK would error, but we give a clean 404).
-    get_issuer(db, issuer_id).await?;
-
+    // Single round-trip: issuer existence check + upsert share one transaction.
     let row = db
         .query_opt(
             "INSERT INTO issuer_kyc_records (issuer_id, wallet, scope, offering_id)
-             VALUES ($1, $2, $3, $4)
+             SELECT i.id, $2, $3, $4
+             FROM issuers i
+             WHERE i.id = $1
              ON CONFLICT (issuer_id, wallet, scope, offering_id) DO UPDATE
                SET updated_at = NOW(),
                    status = CASE WHEN issuer_kyc_records.status = 'rejected'
@@ -120,7 +120,7 @@ pub async fn submit_kyc(
             "submit_kyc",
         )
         .await?
-        .ok_or_else(|| Error::Internal("upsert returned no row".into()))?;
+        .ok_or_else(|| Error::NotFound(format!("issuer {issuer_id} not found")))?;
     Ok(KycRecord::from_row(&row))
 }
 
@@ -204,18 +204,19 @@ pub async fn sync_feed(db: &Db, limit: i64) -> Result<Vec<SyncFeedItem>, Error> 
 
 /// Portal admin marks a row synced after running the kyc-hook ops CLI.
 pub async fn mark_synced(db: &Db, id: i64) -> Result<KycRecord, Error> {
-    let n = db
-        .execute(
-            "UPDATE issuer_kyc_records SET synced_on_chain = TRUE, updated_at = NOW()
-             WHERE id = $1",
+    let row = db
+        .query_opt(
+            "UPDATE issuer_kyc_records
+                SET synced_on_chain = TRUE, updated_at = NOW()
+              WHERE id = $1
+              RETURNING id, issuer_id, wallet, scope, offering_id, status,
+                        is_verified, synced_on_chain, review_note",
             &[&id],
             "mark_synced",
         )
-        .await?;
-    if n == 0 {
-        return Err(Error::NotFound(format!("kyc record {id} not found")));
-    }
-    get_kyc(db, id).await
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("kyc record {id} not found")))?;
+    Ok(KycRecord::from_row(&row))
 }
 
 #[cfg(test)]
