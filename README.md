@@ -2,15 +2,14 @@
 
 Off-chain **system of record** for the x402 [`rwa-kyc-hook`](https://github.com/miralandlabs/rwa-kyc-hook)
 tenant model: issuer registration + investor KYC. The portal records decisions
-in Postgres; it **never signs or writes on-chain**. A separate ops sync reads
-the sync feed and drives the kyc-hook CLI with the ops keypair.
+in Postgres; it **never signs or writes on-chain**. [**rwa-kyc-sync**](https://github.com/miralandlabs/rwa-kyc-sync) reads the sync feed and drives the kyc-hook CLI with the ops keypair.
 
 ```
 investor / issuer ──HTTP──▶ rwa-issuer-portal ──Postgres──┐
                                                           │  (records only)
 portal admin ──review/approve──▶                          │
                                                           ▼
-                              GET /api/v1/sync/feed ──▶ ops sync ──▶ rwa-kyc-hook CLI ──▶ on-chain KycRecord
+                              GET /api/v1/sync/feed ──▶ rwa-kyc-sync ──▶ rwa-kyc-hook CLI ──▶ on-chain KycRecord
 ```
 
 One **portal admin** bearer token per deployment (not per issuer). On-chain signing stays in the separate ops sync + `ops_authority` keypair.
@@ -114,22 +113,25 @@ builder and empty `public/` on clone will fail. Use the workflow instead.
 
 Pin Vercel CLI to **52.x** in CI (newer CLI breaks legacy `builds` + `vercel-rust`).
 
-## Sync worker (example)
+## Ops sync worker
 
-The ops side is out of this repo (it holds the keypair):
+On-chain writes are **not** in this repo (records-only). Deploy
+[**rwa-kyc-sync**](https://github.com/miralandlabs/rwa-kyc-sync) on a dedicated
+ops host or GitHub Actions cron:
 
 ```bash
-for row in $(curl -s -H "Authorization: Bearer $PORTAL_ADMIN_TOKEN" "$PORTAL/api/v1/sync/feed" | jq -c '.items[]'); do
-  ISSUER=$(echo "$row" | jq -r .issuer_id_hex)
-  WALLET=$(echo "$row" | jq -r .wallet)
-  SCOPE=$(echo "$row" | jq -r .scope)
-  VERIFIED=$(echo "$row" | jq -r .is_verified)
-  ID=$(echo "$row" | jq -r .id)
-  export RWA_KYC_HOOK_ISSUER_ID="$ISSUER" OPS_KEYPAIR=/secure/ops.json
-  # run rwa-kyc-hook scripts (create if needed, then update verified)
-  curl -s -X POST -H "Authorization: Bearer $PORTAL_ADMIN_TOKEN" "$PORTAL/api/v1/sync/mark" -d "{\"id\":$ID}"
-done
+git clone https://github.com/miralandlabs/rwa-kyc-sync.git
+cd rwa-kyc-sync && cp env.example .env   # edit paths
+
+cargo install rwa-kyc-hook-cli   # or set RWA_KYC_HOOK_CLI to a built binary
+PORTAL_URL=https://your-portal.vercel.app \
+PORTAL_ADMIN_TOKEN=… \
+OPS_KEYPAIR=/secure/ops.json \
+./sync-worker.sh --once
 ```
+
+See [rwa-kyc-sync README](https://github.com/miralandlabs/rwa-kyc-sync) and hub
+[`RWA_OPS_RUNBOOK.md`](https://github.com/miraland-labs/x402/blob/main/RWA_OPS_RUNBOOK.md).
 
 ## Theme
 
